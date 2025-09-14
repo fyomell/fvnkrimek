@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --dark-bg: #0c0c1e; --card-bg: #1a1a2e; --neon-cyan: #00fff2; --text-color: #e0e0e0; --light-text: #aaa; --btn-text: #0c0c1e; --danger-color: #f44336; --warning-color: #ffc107; }
+        body { margin: 0; padding: 2rem; font-family: 'Poppins', sans-serif; background: var(--dark-bg); color: var(--text-color); }
+        .container { max-width: 1000px; margin: auto; }
+        h1, h2 { color: var(--neon-cyan); text-align: center; }
+        .home-link { display: block; text-align: center; margin-bottom: 2rem; color: var(--neon-cyan); }
+        table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; table-layout: fixed; }
+        th, td { padding: 0.75rem; border: 1px solid var(--card-bg); text-align: left; word-wrap: break-word; }
+        th { background-color: var(--card-bg); }
+        tbody tr:nth-child(odd) { background-color: #131326; }
+        .actions button { padding: 0.3rem 0.6rem; font-size: 12px; margin-right: 5px; border-radius: 4px; border: none; cursor: pointer; margin-top: 5px; }
+        .btn-make-reseller-web { background-color: #17a2b8; color: white; }
+        .btn-make-reseller-panel { background-color: var(--neon-cyan); color: var(--btn-text); }
+        .btn-make-user { background-color: var(--light-text); color: var(--btn-text); }
+        .btn-ban { background-color: var(--danger-color); color: white; }
+        .btn-unban { background-color: #4caf50; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Admin Dashboard</h1>
+        <p id="welcomeMessage" style="text-align: center; color: var(--light-text);"></p>
+        <a href="/index.html" class="home-link">Kembali ke Home</a>
+        <div class="user-management">
+            <h2>User Management</h2>
+            <table id="usersTable">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th>Panel Dibuat</th>
+                        <th>Status</th>
+                        <th>Aksi</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td colspan="5" style="text-align:center;">Memuat data...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <script type="module">
+        import { auth, db } from './firebase-config.js';
+        import { onAuthStateChanged, getIdToken } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
+        import { doc, getDoc } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+        let idToken = null;
+        let currentUser = null;
+        let currentUserData = null;
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                currentUser = user;
+                const userDocRef = doc(db, "users", user.uid);
+                const docSnap = await getDoc(userDocRef);
+                if (!docSnap.exists() || (docSnap.data().role !== 'owner' && docSnap.data().role !== 'web_reseller')) {
+                    alert('Akses ditolak!');
+                    return window.location.replace('/index.html');
+                }
+                currentUserData = docSnap.data();
+                document.getElementById('welcomeMessage').textContent = `Login sebagai: ${currentUserData.username} (Role: ${currentUserData.role})`;
+                idToken = await getIdToken(user);
+                loadAllUsers();
+            } else {
+                window.location.replace('/login.html');
+            }
+        });
+        async function loadAllUsers() {
+            const tableBody = document.getElementById('usersTable').querySelector('tbody');
+            try {
+                const response = await fetch('/api/admin/getAllUsers', {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+                if (!response.ok) throw new Error('Gagal memuat data user.');
+                const users = await response.json();
+                tableBody.innerHTML = '';
+                users.forEach(user => {
+                    if (user.role === 'owner') return;
+                    const isBanned = user.banned;
+                    let actionButtons = '';
+                    if (currentUserData.role === 'owner') {
+                        if (user.role !== 'web_reseller') actionButtons += `<button class="btn-make-reseller-web" onclick="window.setUserRole('${user.username}', 'web_reseller')">Jadi Reseller Web</button>`;
+                        if (user.role === 'web_reseller') actionButtons += `<button class="btn-make-user" onclick="window.setUserRole('${user.username}', 'user')">Jadi User Biasa</button>`;
+                        if (!isBanned) actionButtons += `<button class="btn-ban" onclick="window.setBanStatus('${user.username}', true)">Ban</button>`;
+                        if (isBanned) actionButtons += `<button class="btn-unban" onclick="window.setBanStatus('${user.username}', false)">Unban</button>`;
+                    } else if (currentUserData.role === 'web_reseller') {
+                        if (user.role === 'user') actionButtons += `<button class="btn-make-reseller-panel" onclick="window.setUserRole('${user.username}', 'reseller')">Jadi Reseller Panel</button>`;
+                        if (user.role === 'reseller') actionButtons += `<button class="btn-make-user" onclick="window.setUserRole('${user.username}', 'user')">Jadi User Biasa</button>`;
+                    }
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${user.username}</td>
+                        <td>${user.role}</td>
+                        <td>${user.panelCount || 0}</td>
+                        <td>${isBanned ? '<span style="color:var(--danger-color);">Banned</span>' : '<span style="color:#4caf50;">Aktif</span>'}</td>
+                        <td class="actions">${actionButtons}</td>
+                    `;
+                    tableBody.appendChild(tr);
+                });
+            } catch (error) {
+                tableBody.innerHTML = `<tr><td colspan="5" style="text-align:center; color: var(--danger-color);">${error.message}</td></tr>`;
+            }
+        }
+        async function updateUserState(username, state) {
+            let confirmationMessage = `Apakah Anda yakin ingin mengubah status user ${username}?`;
+            if (currentUserData.role === 'web_reseller' && state.role === 'reseller') {
+                confirmationMessage = `Ini akan mengirim permintaan untuk menjadikan ${username} sebagai Reseller Panel. Lanjutkan?`;
+            }
+            if (!confirm(confirmationMessage)) return;
+            try {
+                const response = await fetch('/api/admin/setUserState', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+                    body: JSON.stringify({ username, ...state })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.message);
+                alert(result.message);
+                loadAllUsers();
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+        window.setUserRole = (username, role) => updateUserState(username, { role });
+        window.setBanStatus = (username, banned) => updateUserState(username, { banned });
+    </script>
+</body>
+</html>
